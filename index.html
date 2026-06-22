@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mini-reboot blob 생성기 v2</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1419;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 16px;
+    max-width: 600px;
+    margin-inline: auto;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 8px; }
+  .sub { color: #8a99a8; font-size: 0.9rem; margin: 0 0 16px; }
+  .diag {
+    background: #1a2230;
+    border: 1px solid #2a3445;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    font-size: 0.85rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .diag .ok { color: #2ec97f; }
+  .diag .bad { color: #ff6b6b; }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    color: #8a99a8;
+    margin: 16px 0 6px;
+    font-weight: 600;
+  }
+  textarea, input {
+    width: 100%;
+    background: #1a2230;
+    color: #e6e6e6;
+    border: 1px solid #2a3445;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  input[type=password], input[type=text] { min-height: 48px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .row label { margin: 0; flex: 1; color: #c0c8d0; font-weight: normal; }
+  .row input[type=text] { min-height: 40px; }
+  button {
+    width: 100%;
+    background: #4a9eff;
+    color: white;
+    border: none;
+    padding: 14px;
+    font-size: 1.05rem;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-top: 20px;
+    cursor: pointer;
+  }
+  button:disabled { background: #3a4756; color: #6a7a8a; }
+  button.secondary { background: #2a3445; color: #c0c8d0; margin-top: 8px; }
+  button.copy { background: #2ec97f; margin: 8px 0; padding: 10px; font-size: 0.95rem; }
+  .blob-out, .trigger-out {
+    background: #1a2230;
+    border: 1px solid #2a3445;
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+    font-size: 0.9rem;
+    user-select: all;
+    -webkit-user-select: all;
+  }
+  .blob-out { color: #2ec97f; }
+  .trigger-out { color: #4a9eff; }
+  .error { color: #ff6b6b; font-size: 0.9rem; margin-top: 8px; padding: 8px; background: #2a1a1a; border-radius: 6px; }
+  .ok { color: #2ec97f; font-size: 0.85rem; margin-top: 4px; }
+  .processing { color: #4a9eff; font-size: 0.9rem; margin-top: 8px; }
+  details { margin-top: 24px; color: #8a99a8; font-size: 0.85rem; }
+  summary { cursor: pointer; padding: 8px 0; }
+  details code { background: #1a2230; padding: 2px 6px; border-radius: 4px; }
+  .prefix-label { font-size: 0.75rem; color: #8a99a8; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>🔐 mini-reboot blob 생성기</h1>
+<p class="sub">전부 브라우저 안에서 처리. <b>네트워크 전송 없음.</b></p>
+
+<div class="diag" id="diag">진단 중...</div>
+
+<label for="prefix">트리거 prefix (편집 가능)</label>
+<input type="text" id="prefix" value="/reboot-mini " autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+<div class="prefix-label">기본값은 재부팅용. 다른 secret 보낼 땐 비우거나 "API key:" 같은 라벨로 변경.</div>
+
+<label for="secret">Secret (mini-secret 파일 내용)</label>
+<textarea id="secret" placeholder="Bcq4Dh6lJyKM3ZQp/8VuWl5N1cKHbNFmIzPlcEgQrJM=" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+<div class="row">
+  <input type="checkbox" id="remember" style="width:auto; min-height:auto;">
+  <label for="remember">이 기기에 secret 저장 (localStorage)</label>
+</div>
+
+<label for="password">암호화할 평문 (Mac 비번 등)</label>
+<input type="password" id="password" placeholder="••••••••••" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+<button id="encrypt-btn">🔒 암호화</button>
+<button class="secondary" id="clear-btn">전부 지우기</button>
+
+<div id="processing" class="processing" style="display:none">⏳ 암호화 중...</div>
+<div id="error" class="error" style="display:none"></div>
+
+<div id="result" style="display:none">
+  <label>완성 메시지 (텔레그램에 그대로 붙여넣기)</label>
+  <div class="trigger-out" id="trigger-out"></div>
+  <button class="copy" data-target="trigger-out">📋 완성 메시지 복사</button>
+
+  <label>Blob만</label>
+  <div class="blob-out" id="blob-out"></div>
+  <button class="copy" data-target="blob-out">📋 Blob만 복사</button>
+  <div class="ok" id="copy-status"></div>
+</div>
+
+<details>
+<summary>이게 뭐 하는 거?</summary>
+<p>OpenSSL과 호환되는 형식으로 평문을 암호화:</p>
+<p><code>openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -base64 -A -pass file:&lt;secret&gt;</code></p>
+<p>출력은 매번 달라요 (랜덤 salt 때문). 같은 입력이어도 매번 새 blob 생성 가능, 모두 유효합니다.</p>
+<p>Mac mini의 <code>decrypt-blob.sh</code> / <code>mini-reboot.sh</code>가 같은 secret으로 복호화.</p>
+</details>
+
+<details>
+<summary>안 돼요/디버그</summary>
+<p>1. <b>Safari/Chrome에서 직접 열어야 함</b> (Telegram in-app 브라우저는 Web Crypto API 제한될 수 있음). iOS: 파일 → "공유" → "Safari에서 열기".</p>
+<p>2. 위쪽 "진단" 영역에 빨간 표시 있으면 거기에 원인.</p>
+<p>3. 안 되면 화면 스크린샷 + 진단 영역 메시지를 여름이에게 보내주세요.</p>
+</details>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const diagEl = $('diag');
+const errorBox = $('error');
+const resultBox = $('result');
+const blobOut = $('blob-out');
+const triggerOut = $('trigger-out');
+const copyStatus = $('copy-status');
+const processingEl = $('processing');
+const secretEl = $('secret');
+const passwordEl = $('password');
+const rememberEl = $('remember');
+const prefixEl = $('prefix');
+
+// Diagnostic: check Web Crypto availability
+function runDiag() {
+  const checks = [];
+  const hasCrypto = typeof crypto !== 'undefined';
+  const hasSubtle = hasCrypto && typeof crypto.subtle !== 'undefined';
+  const hasEncoder = typeof TextEncoder !== 'undefined';
+  const isSecure = typeof isSecureContext !== 'undefined' ? isSecureContext : 'unknown';
+  const ua = navigator.userAgent.slice(0, 60);
+
+  checks.push((hasCrypto ? '✓' : '✗') + ' crypto');
+  checks.push((hasSubtle ? '✓' : '✗') + ' crypto.subtle');
+  checks.push((hasEncoder ? '✓' : '✗') + ' TextEncoder');
+  checks.push('secureContext=' + isSecure);
+
+  const allOK = hasCrypto && hasSubtle && hasEncoder && isSecure !== false;
+  diagEl.innerHTML = '<span class="' + (allOK ? 'ok' : 'bad') + '">' + checks.join('  ·  ') + '</span><br><span style="font-size:0.75rem;color:#6a7a8a">' + ua + '</span>';
+  return allOK;
+}
+const diagOK = runDiag();
+
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+  resultBox.style.display = 'none';
+  processingEl.style.display = 'none';
+}
+function clearError() {
+  errorBox.style.display = 'none';
+  errorBox.textContent = '';
+}
+
+const savedSecret = localStorage.getItem('mini-reboot-secret');
+if (savedSecret) {
+  secretEl.value = savedSecret;
+  rememberEl.checked = true;
+}
+
+function bytesToBase64(bytes) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+async function encrypt(secret, plaintext) {
+  const enc = new TextEncoder();
+  const secretBytes = enc.encode(secret);
+  const plaintextBytes = enc.encode(plaintext);
+  const salt = crypto.getRandomValues(new Uint8Array(8));
+
+  const baseKey = await crypto.subtle.importKey(
+    'raw', secretBytes, 'PBKDF2', false, ['deriveBits']
+  );
+  const derivedBits = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    baseKey, 48 * 8
+  ));
+  const aesKey = derivedBits.slice(0, 32);
+  const iv = derivedBits.slice(32, 48);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', aesKey, { name: 'AES-CBC' }, false, ['encrypt']
+  );
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-CBC', iv }, cryptoKey, plaintextBytes
+  ));
+
+  const prefix = enc.encode('Salted__');
+  const out = new Uint8Array(prefix.length + salt.length + ciphertext.length);
+  out.set(prefix, 0);
+  out.set(salt, prefix.length);
+  out.set(ciphertext, prefix.length + salt.length);
+  return bytesToBase64(out);
+}
+
+$('encrypt-btn').addEventListener('click', async () => {
+  clearError();
+  processingEl.style.display = 'block';
+  try {
+    if (!diagOK) {
+      throw new Error('Web Crypto API 사용 불가. Safari나 Chrome으로 열어주세요 (Telegram in-app 브라우저 X)');
+    }
+    const secret = secretEl.value.trim();
+    const password = passwordEl.value;
+    if (!secret) throw new Error('secret을 입력해주세요.');
+    if (!password) throw new Error('암호화할 평문을 입력해주세요.');
+
+    const blob = await encrypt(secret, password);
+    blobOut.textContent = blob;
+    triggerOut.textContent = (prefixEl.value || '') + blob;
+    resultBox.style.display = 'block';
+    processingEl.style.display = 'none';
+
+    if (rememberEl.checked) {
+      localStorage.setItem('mini-reboot-secret', secret);
+    } else {
+      localStorage.removeItem('mini-reboot-secret');
+    }
+    passwordEl.value = '';
+  } catch (e) {
+    showError('암호화 실패: ' + (e.message || String(e)));
+    console.error('encrypt error:', e);
+  }
+});
+
+$('clear-btn').addEventListener('click', () => {
+  secretEl.value = '';
+  passwordEl.value = '';
+  rememberEl.checked = false;
+  localStorage.removeItem('mini-reboot-secret');
+  resultBox.style.display = 'none';
+  clearError();
+  processingEl.style.display = 'none';
+});
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button.copy');
+  if (!btn) return;
+  const target = $(btn.dataset.target);
+  const text = target.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    copyStatus.textContent = '✅ 복사됨: ' + (btn.dataset.target === 'trigger-out' ? '완성 메시지' : 'Blob');
+  } catch {
+    const range = document.createRange();
+    range.selectNode(target);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    copyStatus.textContent = '선택됨 — 길게 눌러 복사하세요';
+  }
+  setTimeout(() => { copyStatus.textContent = ''; }, 3000);
+});
+</script>
+</body>
+</html>
