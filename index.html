@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mini-reboot 트리거 생성기 (RSA)</title>
+<title>Secret 암호화 전달기 (RSA)</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -84,12 +84,12 @@
 </style>
 </head>
 <body>
-<h1>🔐 mini-reboot 트리거 생성기 (RSA)</h1>
-<p class="sub">Mac mini의 <b>공개키만</b>으로 Mac 비번을 RSA-OAEP 암호화. 전부 브라우저 안에서 처리.</p>
+<h1>🔐 Secret 암호화 전달기</h1>
+<p class="sub">Mac mini의 <b>공개키만</b>으로 임의 secret을 RSA-OAEP 암호화. 텔레그램 통해 여름이에게 안전하게 전달.</p>
 
 <div class="diag" id="diag">진단 중...</div>
 
-<label for="password">Mac 비번</label>
+<label for="password">암호화할 secret (API 키, 비번, 토큰, 메모 등)</label>
 <input type="password" id="password" placeholder="••••••••••" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
 <div class="pubkey-info" id="pubkey-info">공개키 SHA-256 핑거프린트 로딩...</div>
 
@@ -113,8 +113,8 @@
 <details>
 <summary>이게 뭐 하는 거?</summary>
 <p>Mac mini에서 생성된 RSA-2048 공개키가 이 페이지에 박혀 있어요. 비밀키는 Mac mini의 <code>~/.config/mini-private.pem</code> (mode 600, FileVault 디스크 암호화)에만 존재.</p>
-<p>당신이 Mac 비번을 입력하면 → 공개키로 RSA-OAEP-SHA256 암호화 → base64 한 줄 blob 생성. 이 blob은 비밀키 가진 Mac mini만 복호화 가능.</p>
-<p>이전의 대칭키(공유 secret) 방식과 달리, <b>당신이 secret을 따로 관리할 필요가 없음</b>. 비번 한 줄만 입력하면 끝.</p>
+<p>임의 secret(API 키, 비번, 토큰, 짧은 메모 등 ~190자 이하)을 입력하면 → 공개키로 RSA-OAEP-SHA256 암호화 → base64 한 줄 blob. 이 blob은 비밀키 가진 Mac mini만 복호화 가능.</p>
+<p>완성 트리거는 <code>/secret &lt;blob&gt;</code> 형태. 텔레그램으로 여름이에게 보내면 즉시 복호화 후 현재 작업 맥락에 사용. 복호화된 내용은 그 시점부터 conversation jsonl에 들어감 — 정말 민감한 건 보내지 마시고 단발성 secret만.</p>
 </details>
 
 <details>
@@ -134,7 +134,7 @@ RCkSj4+Y763o2xkS/Y8hDmXuYdPt5dfRZjOGF9h5gUZtti8dQJFJ5WvteYpCizrr
 7Plb4hjVmyCb0KikkbPCJt59ZB8e9lROuwrNPilm4aqUxnKnYHboFIIauejCuiQs
 UwIDAQAB
 -----END PUBLIC KEY-----`;
-const TRIGGER_PREFIX = '/reboot-mini ';
+const TRIGGER_PREFIX = '/secret ';
 
 const $ = (id) => document.getElementById(id);
 const diagEl = $('diag');
@@ -236,8 +236,8 @@ $('encrypt-btn').addEventListener('click', async () => {
     if (!diagOK) throw new Error('Web Crypto API 사용 불가 — 진단 패널 확인');
     if (!importedPubKey) throw new Error('공개키 아직 로드 안 됨 — 잠시 후 다시');
     const password = passwordEl.value;
-    if (!password) throw new Error('Mac 비번을 입력해주세요.');
-    if (password.length > 190) throw new Error('비번이 너무 깁니다 (RSA-2048 OAEP 한계 ~190자)');
+    if (!password) throw new Error('Secret을 입력해주세요.');
+    if (password.length > 190) throw new Error('Secret이 너무 깁니다 (RSA-2048 OAEP 한계 ~190자)');
 
     const blob = await encrypt(password);
     blobOut.textContent = blob;
