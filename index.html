@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Secret 암호화 전달기 (RSA)</title>
+<title>Secret 암호화 전달기 (Secure Enclave ECIES)</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -85,13 +85,13 @@
 </head>
 <body>
 <h1>🔐 Secret 암호화 전달기</h1>
-<p class="sub">Mac mini의 <b>공개키만</b>으로 임의 secret을 RSA-OAEP 암호화. 텔레그램 통해 여름이에게 안전하게 전달.</p>
+<p class="sub">Mac mini Secure Enclave 안의 키만 복호화 가능. 키는 칩 밖으로 안 나옴 — 디스크 덤프해도, root여도 못 꺼냄. 텔레그램으로 여름이에게 전달.</p>
 
 <div class="diag" id="diag">진단 중...</div>
 
 <label for="password">암호화할 secret (API 키, 비번, 토큰, 메모 등)</label>
 <input type="password" id="password" placeholder="••••••••••" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-<div class="pubkey-info" id="pubkey-info">공개키 SHA-256 핑거프린트 로딩...</div>
+<div class="pubkey-info" id="pubkey-info">공개키 로딩...</div>
 
 <button id="encrypt-btn">🔒 암호화</button>
 <button class="secondary" id="clear-btn">전부 지우기</button>
@@ -104,7 +104,7 @@
   <div class="trigger-out" id="trigger-out"></div>
   <button class="copy" data-target="trigger-out">📋 트리거 복사</button>
 
-  <label>Blob만 (base64 RSA-OAEP)</label>
+  <label>Blob만 (base64 ECIES)</label>
   <div class="blob-out" id="blob-out"></div>
   <button class="copy" data-target="blob-out">📋 Blob만 복사</button>
   <div class="ok" id="copy-status"></div>
@@ -112,9 +112,9 @@
 
 <details>
 <summary>이게 뭐 하는 거?</summary>
-<p>Mac mini에서 생성된 RSA-2048 공개키가 이 페이지에 박혀 있어요. 비밀키는 Mac mini의 <code>~/.config/mini-private.pem</code> (mode 600, FileVault 디스크 암호화)에만 존재.</p>
-<p>임의 secret(API 키, 비번, 토큰, 짧은 메모 등 ~190자 이하)을 입력하면 → 공개키로 RSA-OAEP-SHA256 암호화 → base64 한 줄 blob. 이 blob은 비밀키 가진 Mac mini만 복호화 가능.</p>
-<p>완성 트리거는 <code>/secret &lt;blob&gt;</code> 형태. 텔레그램으로 여름이에게 보내면 즉시 복호화 후 현재 작업 맥락에 사용. 복호화된 내용은 그 시점부터 conversation jsonl에 들어감 — 정말 민감한 건 보내지 마시고 단발성 secret만.</p>
+<p>Mac mini의 Secure Enclave (T2/Apple Silicon 칩) 안에서 생성된 P-256 EC 키쌍. <b>비밀키는 SE 칩 밖으로 나오지 않음.</b> 디스크의 <code>~/.config/se-keys/default.bin</code>은 SE에 바인딩된 wrapped reference라 다른 맥에서는 무용지물.</p>
+<p>이 페이지는 SE 공개키만 박혀 있음. 입력한 secret을 ECIES (ECDH + HKDF-SHA256 + AES-256-GCM) 로 암호화 → blob. 비밀키 가진 SE만 복호화 가능.</p>
+<p>완성 트리거는 <code>/secret &lt;blob&gt;</code> 형태. 텔레그램으로 여름이에게 보내면 즉시 복호화 후 현재 작업 맥락에 사용. 복호화된 내용은 그 시점부터 conversation jsonl에 들어감.</p>
 </details>
 
 <details>
@@ -125,16 +125,11 @@
 </details>
 
 <script>
-const PUBKEY_PEM = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2Lrt5XoejL2SfoTpmfkQ
-JQ8+VEFqzwj/tUvlF+zIjk51poIvUg1yZSTJRym80JlUFzeEQJAaBjF6PFHYq9+r
-zjhcHDEai/4NY0AamzsvCa8njfSxPGn4aiav1CyiB/yztQr/x7zwyqSWm70iq9v7
-zMzjhr8uA0NX8D7Jt1eK9Az45fSNgUTI8VjJXpCzytMJVIZegtQpKSAeOkq3+p5j
-RCkSj4+Y763o2xkS/Y8hDmXuYdPt5dfRZjOGF9h5gUZtti8dQJFJ5WvteYpCizrr
-7Plb4hjVmyCb0KikkbPCJt59ZB8e9lROuwrNPilm4aqUxnKnYHboFIIauejCuiQs
-UwIDAQAB
------END PUBLIC KEY-----`;
+// SE-generated P-256 public key (X9.63 uncompressed: 0x04 || X(32) || Y(32) = 65 bytes).
+// Private key lives in the Mac mini Secure Enclave; this page only ever sees the public half.
+const PUBKEY_B64 = 'BKx26CCHwV7nxBfg3twmtnk0zeI8o67BGHlrcnewS5iGLMUGxK/vklNJmALy4noTIARrAGfwcd62rnZ2WFmZELQ=';
 const TRIGGER_PREFIX = '/secret ';
+const HKDF_INFO_TEXT = 'se-decrypt v1';
 
 const $ = (id) => document.getElementById(id);
 const diagEl = $('diag');
@@ -176,12 +171,11 @@ function clearError() {
   errorBox.textContent = '';
 }
 
-function pemToDer(pem) {
-  const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
+function base64ToBytes(b64) {
   const bin = atob(b64);
-  const der = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) der[i] = bin.charCodeAt(i);
-  return der;
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 function bytesToBase64(bytes) {
@@ -190,40 +184,79 @@ function bytesToBase64(bytes) {
   return btoa(bin);
 }
 
+function concat(...arrays) {
+  const total = arrays.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+
 async function bufferSha256Hex(buf) {
   const hashBuf = await crypto.subtle.digest('SHA-256', buf);
   return [...new Uint8Array(hashBuf)]
     .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-let importedPubKey = null;
+let recipientPubKey = null;
 
 async function loadPublicKey() {
   try {
-    const der = pemToDer(PUBKEY_PEM);
-    importedPubKey = await crypto.subtle.importKey(
-      'spki', der,
-      { name: 'RSA-OAEP', hash: 'SHA-256' },
-      false,
-      ['encrypt']
+    const raw = base64ToBytes(PUBKEY_B64);
+    if (raw.length !== 65 || raw[0] !== 0x04) {
+      throw new Error('not a valid P-256 uncompressed point');
+    }
+    recipientPubKey = await crypto.subtle.importKey(
+      'raw', raw,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      []
     );
-    const fp = await bufferSha256Hex(der);
-    pubkeyInfo.textContent = '공개키 SHA-256: ' + fp.slice(0, 16) + '... (' + fp.length / 2 + 'B 다이제스트)';
+    const fp = await bufferSha256Hex(raw);
+    pubkeyInfo.textContent = 'SE 공개키 SHA-256: ' + fp.slice(0, 16) + '... (P-256, ' + raw.length + 'B)';
   } catch (e) {
     pubkeyInfo.textContent = '⚠ 공개키 로드 실패: ' + e.message;
   }
 }
 
-async function encrypt(plaintext) {
-  if (!importedPubKey) throw new Error('공개키가 아직 로드되지 않음');
-  const enc = new TextEncoder();
-  const data = enc.encode(plaintext);
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'RSA-OAEP' },
-    importedPubKey,
-    data
+async function encryptECIES(plaintext) {
+  if (!recipientPubKey) throw new Error('공개키가 아직 로드되지 않음');
+  // 1. ephemeral keypair
+  const eph = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true, ['deriveBits']
   );
-  return bytesToBase64(new Uint8Array(ciphertext));
+  const ephPubRaw = new Uint8Array(
+    await crypto.subtle.exportKey('raw', eph.publicKey)
+  );
+  // 2. ECDH shared secret
+  const sharedBits = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: recipientPubKey },
+    eph.privateKey, 256
+  );
+  const shared = new Uint8Array(sharedBits);
+  // 3. HKDF-SHA256 → 32-byte AES key (salt = ephPub bytes, info = "se-decrypt v1")
+  const base = await crypto.subtle.importKey(
+    'raw', shared, 'HKDF', false, ['deriveBits']
+  );
+  const info = new TextEncoder().encode(HKDF_INFO_TEXT);
+  const keyBits = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: ephPubRaw, info: info },
+    base, 256
+  ));
+  const aesKey = await crypto.subtle.importKey(
+    'raw', keyBits, { name: 'AES-GCM' }, false, ['encrypt']
+  );
+  // 4. AES-256-GCM with 12-byte random nonce
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ctTag = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    aesKey,
+    new TextEncoder().encode(plaintext)
+  ));
+  // 5. blob = ephPub(65) || nonce(12) || ct+tag
+  const blob = concat(ephPubRaw, nonce, ctTag);
+  return bytesToBase64(blob);
 }
 
 const diagOK = runDiag();
@@ -234,12 +267,13 @@ $('encrypt-btn').addEventListener('click', async () => {
   processingEl.style.display = 'block';
   try {
     if (!diagOK) throw new Error('Web Crypto API 사용 불가 — 진단 패널 확인');
-    if (!importedPubKey) throw new Error('공개키 아직 로드 안 됨 — 잠시 후 다시');
+    if (!recipientPubKey) throw new Error('공개키 아직 로드 안 됨 — 잠시 후 다시');
     const password = passwordEl.value;
     if (!password) throw new Error('Secret을 입력해주세요.');
-    if (password.length > 190) throw new Error('Secret이 너무 깁니다 (RSA-2048 OAEP 한계 ~190자)');
+    // AES-GCM has no practical input cap for this use; warn only on absurd sizes.
+    if (password.length > 8000) throw new Error('너무 깁니다 (8000자 이하 권장)');
 
-    const blob = await encrypt(password);
+    const blob = await encryptECIES(password);
     blobOut.textContent = blob;
     triggerOut.textContent = TRIGGER_PREFIX + blob;
     resultBox.style.display = 'block';
